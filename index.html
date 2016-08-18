@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="https://code.jquery.com/jquery-3.1.0.min.js" integrity="sha256-cCueBR6CsyA4/9szpPfrX3s49M9vUU5BgtiJj06wt/s=" crossorigin="anonymous"></script>
+    <link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js" integrity="sha384-Tc5IQib027qvyjSMfHjOMaLkfuWVxZxUPnCJA7l2mCWNIpG9mGCD8wGNIcPD7Txa" crossorigin="anonymous"></script>
+<style>
+#output {
+  position: absolute;
+  left: 20%;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  font-size: 12px;
+  overflow: scroll;
+}
+#panel {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 20%;
+  bottom: 0;
+}
+
+#panel ul {
+  list-style-type: none;
+  padding: 0;
+}
+#panel li {
+  padding-left: 5px;
+  cursor: pointer;
+}
+#panel li:hover {
+  background-color: #666;
+  color: white;
+}
+#panel-content {
+  height: 100%;
+  overflow: auto;
+  margin-right: 13px;
+}
+
+#tags li.tag-disabled:before {
+  content: '\2610 ';
+}
+
+#tags li.tag-enabled:before {
+  content: '\2611 ';
+}
+
+#keys li:hover:after {
+  position: absolute;
+  right: 15px;
+  content: '  Add >>>';
+}
+#switch {
+  position: absolute;
+  right: 0;
+  width: 13px;
+  top: 0;
+  line-height: 30px;
+
+  background-color: lightgray;
+  height: 100%;
+  vertical-align: middle;
+  text-align: center;
+}
+#switch {
+  color: black;
+  text-decoration: none;
+  cursor: pointer;
+}
+#switch:hover {
+  font-weight: bold;
+}
+#switch:after {
+  content: '<';
+}
+th:hover {
+  color:yellow;
+  background-color: red;
+  cursor: pointer;
+}
+td.empty {
+  color:#ccc
+}
+.no-panel #switch:after {
+  content: '>';
+}
+.no-panel #panel   {
+  width: 13px;
+}
+.no-panel #panel-content   {
+  display: none;
+}
+.no-panel #output   {
+  left: 13px;
+}
+
+.modal-dialog {
+  width: 90%;
+}
+
+.source-stderr {
+  color: red;
+}
+
+#refresh {
+  position: absolute;
+  top: 0;
+  right: 17px;
+}
+
+#refresh:hover {
+  font-weight: bolder;
+  text-decoration: none;
+  font-size: 1.5em;
+  cursor: pointer;
+}
+
+tbody td {
+  cursor: pointer;
+  font-family: "Lucida Console", Monaco, monospace;
+  white-space: pre;
+}
+</style>
+  </head>
+  <body class="n_o-panel">
+    <div id="panel">
+      <div id="panel-content">
+        <strong>Tags:</strong>
+        <ul id="tags">
+        </ul>
+        <strong>Keys:</strong>
+        <ul id="keys">
+        </ul>
+        <a id="refresh">&#x27f2;</a>
+      </div>
+      <div id="switch"></div>
+    </div>
+    <div id="output">
+      <table class="table table-hover table-striped table-condensed">
+        <thead>
+          <tr></tr>
+        </thead>
+        <tbody>
+        </tbody>
+      </table>
+    </div>
+    <div class="modal" id="details" tabindex="-1" role="dialog" aria-labelledby="myModalLabel">
+      <div class="modal-dialog" role="document">
+        <div class="modal-content">
+          <div class="modal-header">
+            <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+            <h4 class="modal-title">Details</h4>
+          </div>
+          <div class="modal-body">
+            <pre></pre>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+  <script>
+let nextEventId = 1;
+let receivedEvents = new Map();
+
+let currentCols = [];
+let currentTags = new Set();
+
+function appendEvent(tbody, e) {
+  if (!currentTags.has(e[0]))
+    return;
+
+  let op = $('#output')[0];
+  let scrollDown = (op.scrollHeight - op.scrollTop) === op.clientHeight;
+
+  let tds = [];
+  currentCols.forEach(col => {
+    let content = col.extract(e[1]);
+    let tdClass = [];
+    if (content === undefined) {
+      content = '-';
+      tdClass = 'empty';
+    } else
+      tdClass = 'source-' + e[1].source;
+
+    tds.push(`<td class="${tdClass}">${content}</td>`);
+  });
+  let tr = $(`<tr>${tds.join()}</th>`).appendTo(tbody).on('click', () => {
+    $('#details h4').text(e[0]);
+    $('#details pre').text(JSON.stringify(e[1], null, '  '));
+    $('#details').modal();
+  });
+
+  if (scrollDown)
+    op.scrollTop = op.scrollHeight;
+}
+
+function configChanged(config) {
+  currentTags = new Set(config.tags);
+  currentCols = config.cols.map(col => {
+    return {
+      name: col,
+      extract(obj) {
+        let tokens = col.split('.');
+        tokens.forEach(token => {
+          if (obj)
+            obj = obj[token]
+        });
+        return obj;
+      }
+    };
+  });
+
+  let tr = $('#output thead tr');
+  tr.empty();
+  currentCols.forEach((col, id) => {
+    $(`<th>${col.name}</th>`).appendTo(tr).on('click', () => {
+      setConfig(config => {
+        config.cols.splice(id, 1);
+      });
+    });
+  });
+
+  let tbody = $('#output tbody');
+  tbody.empty();
+  receivedEvents.forEach(e => appendEvent(tbody, e));
+  $('body').toggleClass('no-panel', !config.panel);
+  refresh();
+}
+
+function setConfig(callback) {
+  let config = {cols:[],tags:[],panel:true};
+  try {
+    if (location.hash) {
+      let hash = JSON.parse(location.hash.substr(1));
+      Object.keys(hash).forEach(key => config[key] = hash[key]);
+    }
+  } catch (ex) {
+    alert(ex);
+  }
+  if (callback)
+    callback(config);
+  location.hash = JSON.stringify(config);
+  configChanged(config);
+}
+
+function refresh() {
+  let keys = new Set();
+  let tags = new Set(currentTags);
+  function parseKeys(obj, prefix) {
+    Object.keys(obj).forEach(key => {
+      let subObj = obj[key];
+      if (typeof subObj !== 'object' || Array.isArray(subObj))
+        keys.add(prefix + key);
+      else
+        parseKeys(subObj, prefix + key + '.');
+    });
+  }
+
+  receivedEvents.forEach(data => {
+    tags.add(data[0]);
+    parseKeys(data[1], '')
+  });
+
+  function tagClass(tag) {
+    return currentTags.has(tag) ? 'enabled' : 'disabled';
+  }
+
+  let tagsUl = $('#tags');
+  tagsUl.empty();
+  Array.from(tags)
+    .sort()
+    .forEach(tag => tagsUl.append($(`<li class="tag-${tagClass(tag)}">${tag}</li>`)));
+  tagsUl.find('li').on('click', e => {
+    let tag = e.currentTarget.textContent;
+    setConfig(config => {
+      let set = new Set(config.tags);
+      if (set.has(tag))
+        set.delete(tag);
+      else
+        set.add(tag);
+      config.tags = Array.from(set);
+    });
+  });
+
+  let ul = $('#keys');
+  ul.empty();
+  Array.from(keys)
+    .sort()
+    .forEach(key => ul.append($(`<li>${key}</li>`)));
+  ul.find('li').on('click', e => {
+    let key = e.currentTarget.textContent;
+    setConfig(config => {
+      config.cols.push(key);
+    });
+  });
+}
+
+$('#switch').on('click', () => {
+  setConfig(config => {
+    config.panel = !config.panel;
+  });
+});
+
+$('#refresh').on('click', refresh);
+
+setConfig(config => {
+  if (!config.url)
+    config.url = prompt('Enter Websocket entpoint', 'ws://192.168.99.100:8080')
+
+  let ws = new WebSocket(config.url);
+  ws.onmessage = function(e) {
+    let eventId = nextEventId++;
+    let data = JSON.parse(e.data);
+    receivedEvents.set(eventId, data);
+    appendEvent($('tbody'), data);
+  };
+});
+</script>
+</html>
